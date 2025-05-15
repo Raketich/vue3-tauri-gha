@@ -29,58 +29,23 @@ jobs:
           distribution: "temurin"
           java-version: "17"
 
-      - name: Setup Android SDK
+      - name: Setup Android SDK and NDK
         uses: android-actions/setup-android@v3
 
-      - name: Install tools
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y jq
+      - name: Accept SDK Licenses
+        run: yes | sdkmanager --licenses
 
       - name: Install Android NDK
-        run: |
-          yes | sdkmanager --licenses
-          sdkmanager --install "ndk;25.2.9519653"
-          echo "NDK_HOME=$ANDROID_SDK_ROOT/ndk/25.2.9519653" >> $GITHUB_ENV
-
-      - name: Verify NDK setup
-        run: |
-          echo "ANDROID_SDK_ROOT: $ANDROID_SDK_ROOT"
-          echo "NDK_HOME: $NDK_HOME"
-          ls -la $NDK_HOME || echo "NDK directory not found!"
-          echo "Checking Tauri config file:"
-          find . -name "tauri.conf.json" -o -name "tauri.conf.*" | xargs ls -la
+        run: sdkmanager --install "ndk;25.2.9519653"
 
       - name: Install dependencies
         run: bun install
 
-      - name: Install Tauri CLI
-        run: bun install -g @tauri-apps/cli
-
       - name: Build Android app
-        run: |
-          # Find the main tauri.conf.json file
-          TAURI_CONF=$(find src-tauri -name "tauri.conf.json")
-          echo "Found Tauri config at: $TAURI_CONF"
-
-          # Create a backup of the original config
-          cp "$TAURI_CONF" "${TAURI_CONF}.backup"
-
-          # Properly set the Android NDK path in the bundle section
-          jq --arg ndk "$NDK_HOME" '
-            if .bundle == null then . += {"bundle": {}} else . end |
-            if .bundle.android == null then .bundle += {"android": {}} else . end |
-            .bundle.android += {"ndk": $ndk} |
-            .build.beforeDevCommand = "" | 
-            .build.beforeBuildCommand = ""
-          ' "${TAURI_CONF}.backup" > "$TAURI_CONF"
-
-          # Print the modified config
-          echo "Modified Tauri config:"
-          cat "$TAURI_CONF"
-
-          # Run the build
-          bun run tauri android build --debug
+        env:
+          ANDROID_NDK_HOME: ${{ env.ANDROID_SDK_ROOT }}/ndk/25.2.9519653
+          NDK_HOME: ${{ env.ANDROID_SDK_ROOT }}/ndk/25.2.9519653
+        run: bun run tauri android build --debug
 
       - name: Upload APK
         uses: actions/upload-artifact@v4

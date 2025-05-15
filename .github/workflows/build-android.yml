@@ -32,6 +32,11 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
+      - name: Install tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq
+
       - name: Install Android NDK
         run: |
           yes | sdkmanager --licenses
@@ -54,16 +59,34 @@ jobs:
 
       - name: Build Android app
         run: |
-          # Create a temporary tauri config override
-          cat > src-tauri/tauri.conf.json.ndk << EOL
-          {
-            "android": {
-              "ndk": "$NDK_HOME"
-            }
-          }
-          EOL
-          # Build with the config override
-          bun run tauri android build --debug --config src-tauri/tauri.conf.json.ndk
+          # Find the main tauri.conf.json file
+          TAURI_CONF=$(find src-tauri -name "tauri.conf.json")
+          echo "Found Tauri config at: $TAURI_CONF"
+
+          # Create a backup of the original config
+          cp "$TAURI_CONF" "${TAURI_CONF}.backup"
+
+          # Update the config to add the NDK path - create properties if missing
+          jq --arg ndk "$NDK_HOME" '
+            if .tauri == null then . += {"tauri": {}} else . end |
+            if .tauri.bundle == null then .tauri += {"bundle": {}} else . end |
+            if .tauri.bundle.android == null then .tauri.bundle += {"android": {}} else . end |
+            .tauri.bundle.android += {"ndk": $ndk} |
+            if .build == null then . += {"build": {}} else . end |
+            .build.beforeDevCommand = "" | 
+            .build.beforeBuildCommand = "" |
+            if .plugins == null then . += {"plugins": {}} else . end |
+            if .plugins.shell == null then .plugins += {"shell": {}} else . end |
+            if .plugins.shell.scope == null then .plugins.shell += {"scope": {}} else . end |
+            .plugins.shell.scope += {"allow": ["**"]}
+          ' "${TAURI_CONF}.backup" > "$TAURI_CONF"
+
+          # Print the modified config
+          echo "Modified Tauri config:"
+          cat "$TAURI_CONF"
+
+          # Run the build
+          bun run tauri android build --debug
 
       - name: Upload APK
         uses: actions/upload-artifact@v4

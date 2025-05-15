@@ -47,8 +47,14 @@ jobs:
           NDK_HOME: ${{ env.ANDROID_SDK_ROOT }}/ndk/25.2.9519653
         run: bun run tauri android build --debug
 
+      - name: Find APK location
+        run: |
+          echo "Searching for APK files:"
+          find src-tauri -name "*.apk" | tee apk-files.txt
+          echo "APK_PATH=$(find src-tauri -name "*.apk" | head -n 1)" >> $GITHUB_ENV
+
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: app-debug
-          path: src-tauri/gen/android/app/build/outputs/apk/debug/app-debug.apk
+          path: ${{ env.APK_PATH }}

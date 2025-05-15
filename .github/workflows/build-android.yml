@@ -66,19 +66,13 @@ jobs:
           # Create a backup of the original config
           cp "$TAURI_CONF" "${TAURI_CONF}.backup"
 
-          # Update the config to add the NDK path - create properties if missing
+          # Properly set the Android NDK path in the bundle section
           jq --arg ndk "$NDK_HOME" '
-            if .tauri == null then . += {"tauri": {}} else . end |
-            if .tauri.bundle == null then .tauri += {"bundle": {}} else . end |
-            if .tauri.bundle.android == null then .tauri.bundle += {"android": {}} else . end |
-            .tauri.bundle.android += {"ndk": $ndk} |
-            if .build == null then . += {"build": {}} else . end |
+            if .bundle == null then . += {"bundle": {}} else . end |
+            if .bundle.android == null then .bundle += {"android": {}} else . end |
+            .bundle.android += {"ndk": $ndk} |
             .build.beforeDevCommand = "" | 
-            .build.beforeBuildCommand = "" |
-            if .plugins == null then . += {"plugins": {}} else . end |
-            if .plugins.shell == null then .plugins += {"shell": {}} else . end |
-            if .plugins.shell.scope == null then .plugins.shell += {"scope": {}} else . end |
-            .plugins.shell.scope += {"allow": ["**"]}
+            .build.beforeBuildCommand = ""
           ' "${TAURI_CONF}.backup" > "$TAURI_CONF"
 
           # Print the modified config

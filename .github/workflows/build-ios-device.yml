@@ -50,17 +50,78 @@ jobs:
           mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
           echo -n "${{ secrets.IOS_ADHOC_PROVISIONING_PROFILE }}" | base64 --decode > ~/Library/MobileDevice/Provisioning\ Profiles/adhoc.mobileprovision
 
-      # Update developmentTeam in tauri.conf.json
+      # Check and debug the current tauri.conf.json
+      - name: Show current tauri.conf.json
+        run: cat src-tauri/tauri.conf.json
+
+      # Update developmentTeam in tauri.conf.json - with better error handling
       - name: Update tauri config
         run: |
-          sed -i '' 's/"developmentTeam": ".*"/"developmentTeam": "${{ secrets.APPLE_TEAM_ID }}"/' src-tauri/tauri.conf.json
+          echo "Using team ID: ${{ secrets.APPLE_TEAM_ID }}"
+          if [ -z "${{ secrets.APPLE_TEAM_ID }}" ]; then
+            echo "Error: APPLE_TEAM_ID secret is not set"
+            exit 1
+          fi
+
+          # Create a backup of the original file
+          cp src-tauri/tauri.conf.json src-tauri/tauri.conf.json.bak
+
+          # Try to update using jq if available (more reliable)
+          if command -v jq > /dev/null; then
+            echo "Using jq to update tauri.conf.json"
+            jq '.tauri.bundle.macOS.developmentTeam = "${{ secrets.APPLE_TEAM_ID }}"' src-tauri/tauri.conf.json > src-tauri/tauri.conf.json.new
+            mv src-tauri/tauri.conf.json.new src-tauri/tauri.conf.json
+          else
+            echo "Using sed to update tauri.conf.json"
+            sed -i '' 's/"developmentTeam": ".*"/"developmentTeam": "${{ secrets.APPLE_TEAM_ID }}"/' src-tauri/tauri.conf.json
+          fi
+
+          # Show the updated file
+          echo "Updated tauri.conf.json:"
           cat src-tauri/tauri.conf.json
+
+      # Explicitly set the development team in the iOS project
+      - name: Set development team directly in Xcode project
+        run: |
+          cd src-tauri
+          # Initialize Tauri iOS first
+          bun run tauri ios init
+
+          # Create a simple script to update the Xcode project
+          cat > update_project.rb << 'EOL'
+          require 'xcodeproj'
+
+          # Open the Xcode project
+          project_path = Dir.glob("gen/apple/*.xcodeproj").first
+          project = Xcodeproj::Project.open(project_path)
+
+          # Set the development team for all targets
+          project.targets.each do |target|
+            target.build_configurations.each do |config|
+              config.build_settings['DEVELOPMENT_TEAM'] = ENV['TEAM_ID']
+            end
+          end
+
+          # Save the changes
+          project.save
+          EOL
+
+          # Install the xcodeproj gem and run the script
+          gem install xcodeproj
+          TEAM_ID="${{ secrets.APPLE_TEAM_ID }}" ruby update_project.rb
+
+          cd ..
 
       - name: Initialize Tauri iOS
         run: bun run tauri ios init
 
       - name: Build iOS app for device
-        run: bun run tauri ios build --debug
+        run: |
+          # Try with debug flag first
+          bun run tauri ios build --debug || {
+            echo "Debug build failed, trying without --debug flag"
+            bun run tauri ios build
+          }
 
       # Find the generated .app file
       - name: Locate app file
@@ -68,6 +129,8 @@ jobs:
           APP_PATH=$(find src-tauri -path "*/build/arm64/*.app" -type d | head -n 1)
           if [ -z "$APP_PATH" ]; then
             echo "Error: Could not find app file."
+            echo "Searching for any .app files:"
+            find src-tauri -name "*.app" -type d
             exit 1
           fi
           echo "APP_PATH=$APP_PATH" >> $GITHUB_ENV

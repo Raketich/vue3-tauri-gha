@@ -15,6 +15,16 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Verify secrets
+        run: |
+          if [ -z "${{ secrets.APPLE_TEAM_ID }}" ]; then
+            echo "Error: APPLE_TEAM_ID secret is not set or empty"
+            exit 1
+          fi
+          echo "Team ID is set and has length: ${#TEAM_ID}"
+        env:
+          TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+
       - name: Setup Bun
         uses: oven-sh/setup-bun@v1
         with:
@@ -50,49 +60,76 @@ jobs:
           mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
           echo -n "${{ secrets.IOS_ADHOC_PROVISIONING_PROFILE }}" | base64 --decode > ~/Library/MobileDevice/Provisioning\ Profiles/adhoc.mobileprovision
 
-      # Show current tauri.conf.json for debugging
-      - name: Show current tauri.conf.json
+      # Debug: Show the current tauri.conf.json
+      - name: Show current tauri config
         run: cat src-tauri/tauri.conf.json
 
-      # Simple update to the developmentTeam using sed
+      # Update tauri.conf.json with team ID
       - name: Update tauri config
         run: |
-          if [ -z "${{ secrets.APPLE_TEAM_ID }}" ]; then
-            echo "Error: APPLE_TEAM_ID secret is not set"
+          # First create a backup
+          cp src-tauri/tauri.conf.json src-tauri/tauri.conf.json.backup
+
+          # Get the content of the iOS section
+          if grep -q '"iOS": {' src-tauri/tauri.conf.json; then
+            # Check if developmentTeam already exists
+            if grep -q '"developmentTeam"' src-tauri/tauri.conf.json; then
+              # Replace existing team ID
+              sed -i '' 's/"developmentTeam": "[^"]*"/"developmentTeam": "${{ secrets.APPLE_TEAM_ID }}"/' src-tauri/tauri.conf.json
+            else
+              # Add team ID to iOS section
+              sed -i '' 's/"iOS": {/"iOS": {\n      "developmentTeam": "${{ secrets.APPLE_TEAM_ID }}",/' src-tauri/tauri.conf.json
+            fi
+          else
+            echo "Error: iOS section not found in tauri.conf.json"
             exit 1
           fi
 
-          # Update the team ID with the original working sed command
-          sed -i '' 's/"developmentTeam": ".*"/"developmentTeam": "${{ secrets.APPLE_TEAM_ID }}"/' src-tauri/tauri.conf.json
-
-          # Show the updated file
           echo "Updated tauri.conf.json:"
           cat src-tauri/tauri.conf.json
 
+      # Initialize Tauri iOS (this creates the Xcode project)
       - name: Initialize Tauri iOS
         run: bun run tauri ios init
 
-      # Update the Xcode project directly using PlistBuddy (simpler approach)
-      - name: Update Xcode project settings
+      # Debug: Show the created project structure
+      - name: Show Xcode project structure
         run: |
-          # Find the project file
-          PROJECT_FILE=$(find src-tauri/gen/apple -name "*.xcodeproj" -type d | head -n 1)
-          PBXPROJ="$PROJECT_FILE/project.pbxproj"
+          find src-tauri/gen/apple -type f -name "project.pbxproj" | xargs cat | grep -i "DEVELOPMENT_TEAM"
+          find src-tauri/gen/apple -type f -name "*.xcodeproj" -o -name "*.xcworkspace"
 
-          if [ -f "$PBXPROJ" ]; then
-            echo "Found project at: $PBXPROJ"
-            # Replace all occurrences of development team in the project file
-            sed -i '' 's/DEVELOPMENT_TEAM = "";/DEVELOPMENT_TEAM = "${{ secrets.APPLE_TEAM_ID }}";/g' "$PBXPROJ"
-            sed -i '' 's/DEVELOPMENT_TEAM = .*;/DEVELOPMENT_TEAM = "${{ secrets.APPLE_TEAM_ID }}";/g' "$PBXPROJ"
-          else
-            echo "Could not find Xcode project file"
+      # Update the Xcode project directly as a fallback method
+      - name: Update Xcode project build settings
+        run: |
+          PROJECT_FILE=$(find src-tauri/gen/apple -name "*.xcodeproj" -type d | head -n 1)
+          if [ -z "$PROJECT_FILE" ]; then
+            echo "Error: Could not find Xcode project file"
+            exit 1
           fi
 
+          PBXPROJ="$PROJECT_FILE/project.pbxproj"
+          echo "Found project at: $PBXPROJ"
+
+          # Backup the file
+          cp "$PBXPROJ" "$PBXPROJ.backup"
+
+          # Replace all team ID settings with our APPLE_TEAM_ID
+          sed -i '' 's/DEVELOPMENT_TEAM = "";/DEVELOPMENT_TEAM = "${{ secrets.APPLE_TEAM_ID }}";/g' "$PBXPROJ"
+          sed -i '' 's/DEVELOPMENT_TEAM = "[^"]*";/DEVELOPMENT_TEAM = "${{ secrets.APPLE_TEAM_ID }}";/g' "$PBXPROJ"
+
+          # Show the changes made
+          grep -i "DEVELOPMENT_TEAM" "$PBXPROJ"
+
+      # Build using Tauri
       - name: Build iOS app for device
         run: |
-          # Try with debug flag first
+          # Configure environment variables that might help
+          export DEVELOPMENT_TEAM="${{ secrets.APPLE_TEAM_ID }}"
+          export APPLE_TEAM_ID="${{ secrets.APPLE_TEAM_ID }}"
+
+          # First try with debug flag
           bun run tauri ios build --debug || {
-            echo "Debug build failed, trying without --debug flag"
+            echo "Debug build failed, trying without debug flag"
             bun run tauri ios build
           }
 

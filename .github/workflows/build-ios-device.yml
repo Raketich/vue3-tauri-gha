@@ -60,78 +60,30 @@ jobs:
           mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
           echo -n "${{ secrets.IOS_ADHOC_PROVISIONING_PROFILE }}" | base64 --decode > ~/Library/MobileDevice/Provisioning\ Profiles/adhoc.mobileprovision
 
-      # Debug: Show the current tauri.conf.json
-      - name: Show current tauri config
+      # Show current tauri.conf.json
+      - name: Show tauri.conf.json
         run: cat src-tauri/tauri.conf.json
 
-      # Update tauri.conf.json with team ID
-      - name: Update tauri config
+      # Update developmentTeam directly with a simple sed command
+      - name: Update developmentTeam in tauri.conf.json
         run: |
-          # First create a backup
-          cp src-tauri/tauri.conf.json src-tauri/tauri.conf.json.backup
+          # Show current value
+          echo "Current developmentTeam value:"
+          grep -A 1 '"developmentTeam"' src-tauri/tauri.conf.json || echo "No developmentTeam found"
 
-          # Get the content of the iOS section
-          if grep -q '"iOS": {' src-tauri/tauri.conf.json; then
-            # Check if developmentTeam already exists
-            if grep -q '"developmentTeam"' src-tauri/tauri.conf.json; then
-              # Replace existing team ID
-              sed -i '' 's/"developmentTeam": "[^"]*"/"developmentTeam": "${{ secrets.APPLE_TEAM_ID }}"/' src-tauri/tauri.conf.json
-            else
-              # Add team ID to iOS section
-              sed -i '' 's/"iOS": {/"iOS": {\n      "developmentTeam": "${{ secrets.APPLE_TEAM_ID }}",/' src-tauri/tauri.conf.json
-            fi
-          else
-            echo "Error: iOS section not found in tauri.conf.json"
-            exit 1
-          fi
+          # Update the value with a simple sed command
+          sed -i '' 's/"developmentTeam": "[^"]*"/"developmentTeam": "${{ secrets.APPLE_TEAM_ID }}"/' src-tauri/tauri.conf.json
 
-          echo "Updated tauri.conf.json:"
-          cat src-tauri/tauri.conf.json
+          # Verify the change
+          echo "Updated developmentTeam value:"
+          grep -A 1 '"developmentTeam"' src-tauri/tauri.conf.json
 
-      # Initialize Tauri iOS (this creates the Xcode project)
       - name: Initialize Tauri iOS
         run: bun run tauri ios init
 
-      # Debug: Show the created project structure
-      - name: Show Xcode project structure
-        run: |
-          find src-tauri/gen/apple -type f -name "project.pbxproj" | xargs cat | grep -i "DEVELOPMENT_TEAM"
-          find src-tauri/gen/apple -type f -name "*.xcodeproj" -o -name "*.xcworkspace"
-
-      # Update the Xcode project directly as a fallback method
-      - name: Update Xcode project build settings
-        run: |
-          PROJECT_FILE=$(find src-tauri/gen/apple -name "*.xcodeproj" -type d | head -n 1)
-          if [ -z "$PROJECT_FILE" ]; then
-            echo "Error: Could not find Xcode project file"
-            exit 1
-          fi
-
-          PBXPROJ="$PROJECT_FILE/project.pbxproj"
-          echo "Found project at: $PBXPROJ"
-
-          # Backup the file
-          cp "$PBXPROJ" "$PBXPROJ.backup"
-
-          # Replace all team ID settings with our APPLE_TEAM_ID
-          sed -i '' 's/DEVELOPMENT_TEAM = "";/DEVELOPMENT_TEAM = "${{ secrets.APPLE_TEAM_ID }}";/g' "$PBXPROJ"
-          sed -i '' 's/DEVELOPMENT_TEAM = "[^"]*";/DEVELOPMENT_TEAM = "${{ secrets.APPLE_TEAM_ID }}";/g' "$PBXPROJ"
-
-          # Show the changes made
-          grep -i "DEVELOPMENT_TEAM" "$PBXPROJ"
-
       # Build using Tauri
       - name: Build iOS app for device
-        run: |
-          # Configure environment variables that might help
-          export DEVELOPMENT_TEAM="${{ secrets.APPLE_TEAM_ID }}"
-          export APPLE_TEAM_ID="${{ secrets.APPLE_TEAM_ID }}"
-
-          # First try with debug flag
-          bun run tauri ios build --debug || {
-            echo "Debug build failed, trying without debug flag"
-            bun run tauri ios build
-          }
+        run: bun run tauri ios build --debug
 
       # Find the generated .app file
       - name: Locate app file

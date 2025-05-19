@@ -64,20 +64,29 @@ jobs:
       - name: Show tauri.conf.json
         run: cat src-tauri/tauri.conf.json
 
-      # Update developmentTeam directly with a simple sed command
-      - name: Update developmentTeam in tauri.conf.json
+      # Add iOS section with developmentTeam
+      - name: Add iOS section with developmentTeam
         run: |
-          # Show current value
-          echo "Current developmentTeam value:"
-          grep -A 1 '"developmentTeam"' src-tauri/tauri.conf.json || echo "No developmentTeam found"
-
-          # Update the value with a simple sed command
-          sed -i '' 's/"developmentTeam": "[^"]*"/"developmentTeam": "${{ secrets.APPLE_TEAM_ID }}"/' src-tauri/tauri.conf.json
+          # First check if we need to add iOS section
+          if grep -q '"iOS": {' src-tauri/tauri.conf.json; then
+            echo "iOS section exists, checking for developmentTeam"
+            if grep -q '"developmentTeam"' src-tauri/tauri.conf.json; then
+              echo "Updating existing developmentTeam"
+              sed -i '' 's/"developmentTeam": "[^"]*"/"developmentTeam": "${{ secrets.APPLE_TEAM_ID }}"/' src-tauri/tauri.conf.json
+            else
+              echo "Adding developmentTeam to existing iOS section"
+              sed -i '' 's/"iOS": {/"iOS": {\n      "developmentTeam": "${{ secrets.APPLE_TEAM_ID }}",/' src-tauri/tauri.conf.json
+            fi
+          else
+            echo "Adding iOS section to bundle"
+            sed -i '' '/"bundle": {/,/^  }/ s/"targets": "all",/"targets": "all",\n    "iOS": {\n      "developmentTeam": "${{ secrets.APPLE_TEAM_ID }}"\n    },/' src-tauri/tauri.conf.json
+          fi
 
           # Verify the change
-          echo "Updated developmentTeam value:"
-          grep -A 1 '"developmentTeam"' src-tauri/tauri.conf.json
+          echo "Updated tauri.conf.json:"
+          cat src-tauri/tauri.conf.json
 
+      # Initialize Tauri iOS
       - name: Initialize Tauri iOS
         run: bun run tauri ios init
 

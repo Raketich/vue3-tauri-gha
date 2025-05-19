@@ -50,70 +50,43 @@ jobs:
           mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
           echo -n "${{ secrets.IOS_ADHOC_PROVISIONING_PROFILE }}" | base64 --decode > ~/Library/MobileDevice/Provisioning\ Profiles/adhoc.mobileprovision
 
-      # Check and debug the current tauri.conf.json
+      # Show current tauri.conf.json for debugging
       - name: Show current tauri.conf.json
         run: cat src-tauri/tauri.conf.json
 
-      # Update developmentTeam in tauri.conf.json - with better error handling
+      # Simple update to the developmentTeam using sed
       - name: Update tauri config
         run: |
-          echo "Using team ID: ${{ secrets.APPLE_TEAM_ID }}"
           if [ -z "${{ secrets.APPLE_TEAM_ID }}" ]; then
             echo "Error: APPLE_TEAM_ID secret is not set"
             exit 1
           fi
 
-          # Create a backup of the original file
-          cp src-tauri/tauri.conf.json src-tauri/tauri.conf.json.bak
-
-          # Try to update using jq if available (more reliable)
-          if command -v jq > /dev/null; then
-            echo "Using jq to update tauri.conf.json"
-            jq '.tauri.bundle.macOS.developmentTeam = "${{ secrets.APPLE_TEAM_ID }}"' src-tauri/tauri.conf.json > src-tauri/tauri.conf.json.new
-            mv src-tauri/tauri.conf.json.new src-tauri/tauri.conf.json
-          else
-            echo "Using sed to update tauri.conf.json"
-            sed -i '' 's/"developmentTeam": ".*"/"developmentTeam": "${{ secrets.APPLE_TEAM_ID }}"/' src-tauri/tauri.conf.json
-          fi
+          # Update the team ID with the original working sed command
+          sed -i '' 's/"developmentTeam": ".*"/"developmentTeam": "${{ secrets.APPLE_TEAM_ID }}"/' src-tauri/tauri.conf.json
 
           # Show the updated file
           echo "Updated tauri.conf.json:"
           cat src-tauri/tauri.conf.json
 
-      # Explicitly set the development team in the iOS project
-      - name: Set development team directly in Xcode project
-        run: |
-          cd src-tauri
-          # Initialize Tauri iOS first
-          bun run tauri ios init
-
-          # Create a simple script to update the Xcode project
-          cat > update_project.rb << 'EOL'
-          require 'xcodeproj'
-
-          # Open the Xcode project
-          project_path = Dir.glob("gen/apple/*.xcodeproj").first
-          project = Xcodeproj::Project.open(project_path)
-
-          # Set the development team for all targets
-          project.targets.each do |target|
-            target.build_configurations.each do |config|
-              config.build_settings['DEVELOPMENT_TEAM'] = ENV['TEAM_ID']
-            end
-          end
-
-          # Save the changes
-          project.save
-          EOL
-
-          # Install the xcodeproj gem and run the script
-          gem install xcodeproj
-          TEAM_ID="${{ secrets.APPLE_TEAM_ID }}" ruby update_project.rb
-
-          cd ..
-
       - name: Initialize Tauri iOS
         run: bun run tauri ios init
+
+      # Update the Xcode project directly using PlistBuddy (simpler approach)
+      - name: Update Xcode project settings
+        run: |
+          # Find the project file
+          PROJECT_FILE=$(find src-tauri/gen/apple -name "*.xcodeproj" -type d | head -n 1)
+          PBXPROJ="$PROJECT_FILE/project.pbxproj"
+
+          if [ -f "$PBXPROJ" ]; then
+            echo "Found project at: $PBXPROJ"
+            # Replace all occurrences of development team in the project file
+            sed -i '' 's/DEVELOPMENT_TEAM = "";/DEVELOPMENT_TEAM = "${{ secrets.APPLE_TEAM_ID }}";/g' "$PBXPROJ"
+            sed -i '' 's/DEVELOPMENT_TEAM = .*;/DEVELOPMENT_TEAM = "${{ secrets.APPLE_TEAM_ID }}";/g' "$PBXPROJ"
+          else
+            echo "Could not find Xcode project file"
+          fi
 
       - name: Build iOS app for device
         run: |

@@ -1,10 +1,6 @@
 name: Build Android App
 
 on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
   workflow_dispatch:
 
 jobs:
@@ -40,6 +36,9 @@ jobs:
 
       - name: Install dependencies
         run: bun install
+
+      - name: Initialize Tauri Android
+        run: bun run tauri android init
 
       - name: Build Android app
         env:

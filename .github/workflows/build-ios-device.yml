@@ -1,0 +1,101 @@
+name: Build iOS App for Device
+
+on:
+  workflow_dispatch:
+    inputs:
+      device_udid:
+        description: "Device UDID to include in ad-hoc provisioning (optional)"
+        required: false
+        type: string
+
+jobs:
+  build-ios-device:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: latest
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios
+
+      - name: Install iOS Dependencies
+        run: rustup target add aarch64-apple-ios
+
+      - name: Setup Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Install project dependencies
+        run: bun install
+
+      # Create a new keychain for iOS code signing
+      - name: Setup iOS signing
+        id: ios-signing
+        uses: apple-actions/import-codesign-certs@v2
+        with:
+          p12-file-base64: ${{ secrets.IOS_DEVELOPMENT_CERTIFICATE }}
+          p12-password: ${{ secrets.IOS_DEVELOPMENT_CERTIFICATE_PASSWORD }}
+          keychain-password: ${{ github.run_id }}
+
+      - name: Install provisioning profile
+        run: |
+          mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
+          echo -n "${{ secrets.IOS_ADHOC_PROVISIONING_PROFILE }}" | base64 --decode > ~/Library/MobileDevice/Provisioning\ Profiles/adhoc.mobileprovision
+
+      # Update developmentTeam in tauri.conf.json
+      - name: Update tauri config
+        run: |
+          sed -i '' 's/"developmentTeam": ".*"/"developmentTeam": "${{ secrets.APPLE_TEAM_ID }}"/' src-tauri/tauri.conf.json
+          cat src-tauri/tauri.conf.json
+
+      - name: Initialize Tauri iOS
+        run: bun run tauri ios init
+
+      - name: Build iOS app for device
+        run: bun run tauri ios build --debug
+
+      # Find the generated .app file
+      - name: Locate app file
+        run: |
+          APP_PATH=$(find src-tauri -path "*/build/arm64/*.app" -type d | head -n 1)
+          if [ -z "$APP_PATH" ]; then
+            echo "Error: Could not find app file."
+            exit 1
+          fi
+          echo "APP_PATH=$APP_PATH" >> $GITHUB_ENV
+          echo "Found app at: $APP_PATH"
+
+      # Create IPA file using ad-hoc export
+      - name: Create IPA file
+        run: |
+          # Create a payload directory
+          PAYLOAD_DIR=$(mktemp -d)/Payload
+          mkdir -p "$PAYLOAD_DIR"
+
+          # Copy the app to the payload directory
+          cp -R "${{ env.APP_PATH }}" "$PAYLOAD_DIR"
+
+          # Create the IPA file
+          IPA_NAME=$(basename "${{ env.APP_PATH }}" .app).ipa
+          IPA_DIR=$(dirname "${{ env.APP_PATH }}")
+          cd $(dirname "$PAYLOAD_DIR")
+          zip -r "$IPA_DIR/$IPA_NAME" Payload
+
+          echo "IPA_PATH=$IPA_DIR/$IPA_NAME" >> $GITHUB_ENV
+          echo "Created IPA at: $IPA_DIR/$IPA_NAME"
+
+      # Upload the IPA as an artifact
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-device-app
+          path: ${{ env.IPA_PATH }}
+          if-no-files-found: error
